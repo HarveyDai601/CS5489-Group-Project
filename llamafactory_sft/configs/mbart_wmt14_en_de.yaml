@@ -1,0 +1,48 @@
+# LlamaFactory SFT config for translating EN -> DE with mBART
+stage: SFT
+model_name_or_path: facebook/mbart-large-50-many-to-many-mmt
+adapter_name_or_path: null
+finetuning_type: lora
+lora_rank: 16
+lora_alpha: 32
+lora_dropout: 0.05
+lora_target: q_proj,v_proj
+seed: 42
+output_dir: outputs/llamafactory/mbart-wmt14-en-de
+template: translation
+cutoff_len: 512
+max_samples: 1000
+val_size: 0
+packing: false
+train_on_inputs: false
+
+# data
+# `dataset` / `val_dataset` refer to file stems under `dataset_dir`
+dataset: wmt14_en_de_train
+val_dataset: wmt14_en_de_validation
+dataset_dir: llamafactory_sft/data
+dataset_format: conversation
+
+# training
+per_device_train_batch_size: 2
+per_device_eval_batch_size: 2
+gradient_accumulation_steps: 8
+learning_rate: 2.0e-4
+weight_decay: 0.01
+num_train_epochs: 3
+warmup_ratio: 0.03
+lr_scheduler_type: cosine
+max_grad_norm: 1.0
+logging_steps: 10
+eval_strategy: steps
+eval_steps: 50
+save_steps: 2000
+save_total_limit: 3
+report_to:
+  - tensorboard
+bf16: true
+
+# generation/eval
+predict_with_generate: true
+generation_max_length: 256
+generation_num_beams: 4
