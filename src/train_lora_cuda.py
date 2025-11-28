@@ -246,13 +246,22 @@ def main():
         preds, labels = eval_preds
         if isinstance(preds, tuple):
             preds = preds[0]
+        if isinstance(labels, tuple):
+            labels = labels[0]
+
         preds = np.asarray(preds)
+        # Seq2SeqTrainer may hand us raw logits when generation is disabled; reduce to ids defensively.
+        if preds.ndim == 3:
+            preds = np.argmax(preds, axis=-1)
         if not np.issubdtype(preds.dtype, np.integer):
             preds = preds.astype(np.int64)
-        decoded_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
+
+        labels = np.asarray(labels)
         labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
         if not np.issubdtype(labels.dtype, np.integer):
             labels = labels.astype(np.int64)
+
+        decoded_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
         decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
         decoded_preds = [pred.strip() for pred in decoded_preds]
         decoded_labels = [[label.strip()] for label in decoded_labels]
