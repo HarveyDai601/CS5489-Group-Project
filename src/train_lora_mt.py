@@ -111,19 +111,33 @@ def prepare_training_arguments(
     return args_dict
 
 
-def enable_gradient_checkpointing(model):
-    base_model = getattr(getattr(model, "base_model", None), "model", model)
-    base_model.gradient_checkpointing_enable()
-    if hasattr(base_model, "enable_input_require_grads"):
-        base_model.enable_input_require_grads()
-    else:
-        input_embeddings = base_model.get_input_embeddings()
-        if input_embeddings is not None:
-            def make_inputs_require_grad(module, inputs, output):
-                if isinstance(output, torch.Tensor):
-                    output.requires_grad_(True)
+def _require_grad_hook(_module, _inputs, output):
+    if isinstance(output, torch.Tensor):
+        output.requires_grad_(True)
 
-            input_embeddings.register_forward_hook(make_inputs_require_grad)
+
+def _ensure_embeddings_require_grad(target) -> None:
+    embeddings = getattr(target, "get_input_embeddings", lambda: None)()
+    if embeddings is not None and hasattr(embeddings, "weight"):
+        embeddings.weight.requires_grad_(True)
+
+
+def enable_gradient_checkpointing(model):
+    base_model = getattr(getattr(model, "base_model", None), "model", None) or getattr(model, "model", None) or model
+    base_model.gradient_checkpointing_enable()
+
+    activated = False
+    for target in (model, base_model):
+        if hasattr(target, "enable_input_require_grads"):
+            target.enable_input_require_grads()
+            activated = True
+    if not activated:
+        embeddings = getattr(base_model, "get_input_embeddings", lambda: None)()
+        if embeddings is not None:
+            embeddings.register_forward_hook(_require_grad_hook)
+
+    _ensure_embeddings_require_grad(base_model)
+
     if hasattr(model, "config"):
         model.config.use_cache = False
 
