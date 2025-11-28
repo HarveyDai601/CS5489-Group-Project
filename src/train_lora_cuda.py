@@ -68,6 +68,17 @@ def get_dtype(name: str) -> torch.dtype:
     return torch.float32
 
 
+def _require_grad_hook(_module, _inputs, output):
+    if isinstance(output, torch.Tensor):
+        output.requires_grad_(True)
+
+
+def _ensure_embeddings_require_grad(target) -> None:
+    embeddings = getattr(target, "get_input_embeddings", lambda: None)()
+    if embeddings is not None and hasattr(embeddings, "weight"):
+        embeddings.weight.requires_grad_(True)
+
+
 def prepare_training_arguments(project_cfg: Dict[str, Any], training_cfg: Dict[str, Any], output_dir: Path) -> Dict[str, Any]:
     signature = inspect.signature(Seq2SeqTrainingArguments.__init__)
     valid_params = set(signature.parameters.keys())
@@ -109,18 +120,21 @@ def build_split_overrides(data_cfg: Dict[str, Any], eval_base: str = "validation
 
 
 def enable_gradient_checkpointing(model):
-    base_model = getattr(getattr(model, "base_model", None), "model", model)
+    base_model = getattr(getattr(model, "base_model", None), "model", None) or getattr(model, "model", None) or model
     base_model.gradient_checkpointing_enable()
-    if hasattr(base_model, "enable_input_require_grads"):
-        base_model.enable_input_require_grads()
-    else:
-        input_embeddings = base_model.get_input_embeddings()
-        if input_embeddings is not None:
-            def hook(_, __, output):
-                if isinstance(output, torch.Tensor):
-                    output.requires_grad_(True)
 
-            input_embeddings.register_forward_hook(hook)
+    activated = False
+    for target in (model, base_model):
+        if hasattr(target, "enable_input_require_grads"):
+            target.enable_input_require_grads()
+            activated = True
+    if not activated:
+        embeddings = getattr(base_model, "get_input_embeddings", lambda: None)()
+        if embeddings is not None:
+            embeddings.register_forward_hook(_require_grad_hook)
+
+    _ensure_embeddings_require_grad(base_model)
+
     if hasattr(model, "config"):
         model.config.use_cache = False
 
@@ -218,6 +232,13 @@ def main():
         metric = evaluate.load("sacrebleu")
     except Exception as exc:  # pylint: disable=broad-except
         LOGGER.warning("BLEU metric disabled: %s", exc)
+        desired_metric = training_cfg.get("metric_for_best_model")
+        if desired_metric and desired_metric != "eval_loss":
+            LOGGER.warning(
+                "Overriding metric_for_best_model=%s to eval_loss because BLEU metrics are unavailable.",
+                desired_metric,
+            )
+            training_cfg["metric_for_best_model"] = "eval_loss"
 
     def compute_metrics(eval_preds):
         if metric is None:
