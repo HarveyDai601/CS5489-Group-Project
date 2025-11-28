@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import inspect
 import logging
+import os
 from pathlib import Path
 from typing import Any, Dict
 
@@ -22,6 +23,8 @@ from transformers import (
 )
 
 from data_utils import build_preprocess_function, load_translation_dataset
+
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 LOGGER = logging.getLogger(__name__)
 
@@ -185,9 +188,6 @@ def main():
 
     model = AutoModelForSeq2SeqLM.from_pretrained(model_cfg["name"], **model_kwargs)
 
-    if model_cfg.get("gradient_checkpointing"):
-        model.gradient_checkpointing_enable()
-
     if model_cfg.get("use_4bit"):
         model = prepare_model_for_kbit_training(model)
 
@@ -205,6 +205,13 @@ def main():
     )
     model = get_peft_model(model, peft_config)
     model.print_trainable_parameters()
+
+    if training_cfg.get("gradient_checkpointing"):
+        model.gradient_checkpointing_enable()
+        if hasattr(model, "enable_input_require_grads"):
+            model.enable_input_require_grads()
+        if hasattr(model, "config"):
+            model.config.use_cache = False
 
     preprocess_function = build_preprocess_function(tokenizer, data_cfg)
     column_names = raw_datasets["train"].column_names
