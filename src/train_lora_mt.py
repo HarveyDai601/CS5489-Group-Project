@@ -111,6 +111,22 @@ def prepare_training_arguments(
     return args_dict
 
 
+def enable_gradient_checkpointing(model):
+    model.gradient_checkpointing_enable()
+    if hasattr(model, "enable_input_require_grads"):
+        model.enable_input_require_grads()
+    else:
+        input_embeddings = model.get_input_embeddings()
+        if input_embeddings is not None:
+            def make_inputs_require_grad(module, inputs, output):
+                if isinstance(output, torch.Tensor):
+                    output.requires_grad_(True)
+
+            input_embeddings.register_forward_hook(make_inputs_require_grad)
+    if hasattr(model, "config"):
+        model.config.use_cache = False
+
+
 def main():
     configure_logging()
     args = parse_args()
@@ -166,6 +182,16 @@ def main():
         cache_dir=cache_dir,
     )
 
+    def _limit_split(split_name: str, max_samples_key: str):
+        max_samples = data_cfg.get(max_samples_key)
+        if max_samples and split_name in raw_datasets:
+            max_samples = min(int(max_samples), len(raw_datasets[split_name]))
+            raw_datasets[split_name] = raw_datasets[split_name].select(range(max_samples))
+
+    _limit_split("train", "max_train_samples")
+    eval_candidate = "validation" if "validation" in raw_datasets else "test"
+    _limit_split(eval_candidate, "max_eval_samples")
+
     tokenizer = AutoTokenizer.from_pretrained(model_cfg["name"], cache_dir=cache_dir)
     tokenizer.pad_token = tokenizer.eos_token if tokenizer.pad_token is None else tokenizer.pad_token
     tokenizer.src_lang = model_cfg["tokenizer_src_lang_code"]
@@ -207,11 +233,7 @@ def main():
     model.print_trainable_parameters()
 
     if training_cfg.get("gradient_checkpointing"):
-        model.gradient_checkpointing_enable()
-        if hasattr(model, "enable_input_require_grads"):
-            model.enable_input_require_grads()
-        if hasattr(model, "config"):
-            model.config.use_cache = False
+        enable_gradient_checkpointing(model)
 
     preprocess_function = build_preprocess_function(tokenizer, data_cfg)
     column_names = raw_datasets["train"].column_names
@@ -221,14 +243,6 @@ def main():
         remove_columns=column_names,
         desc="Tokenizing dataset",
     )
-
-    if data_cfg.get("max_train_samples"):
-        max_train = int(data_cfg["max_train_samples"])
-        processed_datasets["train"] = processed_datasets["train"].select(range(min(len(processed_datasets["train"]), max_train)))
-    if data_cfg.get("max_eval_samples"):
-        max_eval = int(data_cfg["max_eval_samples"])
-        eval_split = "validation" if "validation" in processed_datasets else "test"
-        processed_datasets[eval_split] = processed_datasets[eval_split].select(range(min(len(processed_datasets[eval_split]), max_eval)))
 
     eval_split = "validation" if "validation" in processed_datasets else "test"
 
