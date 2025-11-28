@@ -225,13 +225,13 @@ def main():
 
     data_collator = DataCollatorForSeq2Seq(tokenizer, model=model)
 
-    metric = None
     try:
         import evaluate
 
-        metric = evaluate.load("sacrebleu")
+        bleu_metric = evaluate.load("sacrebleu")
     except Exception as exc:  # pylint: disable=broad-except
-        LOGGER.warning("BLEU metric disabled: %s", exc)
+        LOGGER.warning("Falling back to eval_loss only because sacrebleu failed: %s", exc)
+        bleu_metric = None
         desired_metric = training_cfg.get("metric_for_best_model")
         if desired_metric and desired_metric != "eval_loss":
             LOGGER.warning(
@@ -241,7 +241,7 @@ def main():
             training_cfg["metric_for_best_model"] = "eval_loss"
 
     def compute_metrics(eval_preds):
-        if metric is None:
+        if bleu_metric is None:
             return {}
         preds, labels = eval_preds
         if isinstance(preds, tuple):
@@ -256,7 +256,7 @@ def main():
         decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
         decoded_preds = [pred.strip() for pred in decoded_preds]
         decoded_labels = [[label.strip()] for label in decoded_labels]
-        bleu = metric.compute(predictions=decoded_preds, references=decoded_labels)
+        bleu = bleu_metric.compute(predictions=decoded_preds, references=decoded_labels)
         prediction_lens = [np.count_nonzero(pred != tokenizer.pad_token_id) for pred in preds]
         return {"bleu": bleu["score"], "gen_len": np.mean(prediction_lens)}
 
