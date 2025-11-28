@@ -255,11 +255,14 @@ def main():
             preds = np.argmax(preds, axis=-1)
         if not np.issubdtype(preds.dtype, np.integer):
             preds = preds.astype(np.int64)
+        vocab_size = getattr(tokenizer, "vocab_size", None) or len(tokenizer)
+        preds = np.where((preds >= 0) & (preds < vocab_size), preds, tokenizer.pad_token_id)
 
         labels = np.asarray(labels)
         labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
         if not np.issubdtype(labels.dtype, np.integer):
             labels = labels.astype(np.int64)
+        labels = np.where((labels >= 0) & (labels < vocab_size), labels, tokenizer.pad_token_id)
 
         decoded_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
         decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
