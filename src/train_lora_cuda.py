@@ -247,8 +247,12 @@ def main():
         if isinstance(preds, tuple):
             preds = preds[0]
         preds = np.asarray(preds)
+        if not np.issubdtype(preds.dtype, np.integer):
+            preds = preds.astype(np.int64)
         decoded_preds = tokenizer.batch_decode(preds, skip_special_tokens=True)
         labels = np.where(labels != -100, labels, tokenizer.pad_token_id)
+        if not np.issubdtype(labels.dtype, np.integer):
+            labels = labels.astype(np.int64)
         decoded_labels = tokenizer.batch_decode(labels, skip_special_tokens=True)
         decoded_preds = [pred.strip() for pred in decoded_preds]
         decoded_labels = [[label.strip()] for label in decoded_labels]
@@ -266,7 +270,7 @@ def main():
         args=training_args,
         train_dataset=processed_datasets["train"],
         eval_dataset=processed_datasets[eval_split],
-        tokenizer=tokenizer,
+        processing_class=tokenizer,
         data_collator=data_collator,
         compute_metrics=compute_metrics,
     )
