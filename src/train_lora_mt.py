@@ -112,11 +112,12 @@ def prepare_training_arguments(
 
 
 def enable_gradient_checkpointing(model):
-    model.gradient_checkpointing_enable()
-    if hasattr(model, "enable_input_require_grads"):
-        model.enable_input_require_grads()
+    base_model = getattr(getattr(model, "base_model", None), "model", model)
+    base_model.gradient_checkpointing_enable()
+    if hasattr(base_model, "enable_input_require_grads"):
+        base_model.enable_input_require_grads()
     else:
-        input_embeddings = model.get_input_embeddings()
+        input_embeddings = base_model.get_input_embeddings()
         if input_embeddings is not None:
             def make_inputs_require_grad(module, inputs, output):
                 if isinstance(output, torch.Tensor):
@@ -176,21 +177,37 @@ def main():
             training_cfg["dataloader_pin_memory"] = False
 
     cache_dir = project_cfg.get("cache_dir")
-    raw_datasets = load_translation_dataset(
-        data_cfg["dataset_name"],
-        data_cfg.get("dataset_config"),
-        cache_dir=cache_dir,
-    )
 
-    def _limit_split(split_name: str, max_samples_key: str):
+    def build_split_query(split_base: str, max_samples_key: str) -> str:
         max_samples = data_cfg.get(max_samples_key)
-        if max_samples and split_name in raw_datasets:
-            max_samples = min(int(max_samples), len(raw_datasets[split_name]))
-            raw_datasets[split_name] = raw_datasets[split_name].select(range(max_samples))
+        if max_samples:
+            return f"{split_base}[:{int(max_samples)}]"
+        return split_base
 
-    _limit_split("train", "max_train_samples")
-    eval_candidate = "validation" if "validation" in raw_datasets else "test"
-    _limit_split(eval_candidate, "max_eval_samples")
+    train_split_query = build_split_query("train", "max_train_samples")
+    eval_split_base = "validation"
+    eval_split_query = build_split_query(eval_split_base, "max_eval_samples")
+
+    split_overrides = {"train": train_split_query, eval_split_base: eval_split_query}
+    try:
+        raw_datasets = load_translation_dataset(
+            data_cfg["dataset_name"],
+            data_cfg.get("dataset_config"),
+            cache_dir=cache_dir,
+            split_overrides=split_overrides,
+        )
+        eval_split_name = eval_split_base
+    except ValueError:
+        eval_split_base = "test"
+        eval_split_query = build_split_query(eval_split_base, "max_eval_samples")
+        split_overrides = {"train": train_split_query, eval_split_base: eval_split_query}
+        raw_datasets = load_translation_dataset(
+            data_cfg["dataset_name"],
+            data_cfg.get("dataset_config"),
+            cache_dir=cache_dir,
+            split_overrides=split_overrides,
+        )
+        eval_split_name = eval_split_base
 
     tokenizer = AutoTokenizer.from_pretrained(model_cfg["name"], cache_dir=cache_dir)
     tokenizer.pad_token = tokenizer.eos_token if tokenizer.pad_token is None else tokenizer.pad_token
@@ -244,8 +261,6 @@ def main():
         desc="Tokenizing dataset",
     )
 
-    eval_split = "validation" if "validation" in processed_datasets else "test"
-
     data_collator = DataCollatorForSeq2Seq(tokenizer, model=model)
 
     metric = None
@@ -283,7 +298,7 @@ def main():
         model=model,
         args=training_args,
         train_dataset=processed_datasets["train"],
-        eval_dataset=processed_datasets[eval_split],
+        eval_dataset=processed_datasets[eval_split_name],
         tokenizer=tokenizer,
         data_collator=data_collator,
         compute_metrics=compute_metrics,
@@ -299,7 +314,7 @@ def main():
     trainer.save_state()
 
     eval_metrics = trainer.evaluate(max_length=training_cfg["generation_max_length"], num_beams=training_cfg["generation_num_beams"])
-    eval_metrics["eval_samples"] = len(processed_datasets[eval_split])
+    eval_metrics["eval_samples"] = len(processed_datasets[eval_split_name])
     trainer.log_metrics("eval", eval_metrics)
     trainer.save_metrics("eval", eval_metrics)
 

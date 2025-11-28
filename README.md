@@ -28,6 +28,8 @@ huggingface-cli login
 ## 运行训练
 ```bash
 python src/train_lora_mt.py --config configs/lora_mt.yaml
+# 或在纯 CUDA 环境中：
+python src/train_lora_cuda.py --config configs/lora_mt.yaml
 ```
 
 运行后将在：
