@@ -1,7 +1,7 @@
 """Utility functions for loading and preprocessing translation datasets."""
 from __future__ import annotations
 
-from typing import Any, Callable, Dict
+from typing import Any, Callable, Dict, Mapping
 
 from datasets import DatasetDict, load_dataset
 from transformers import PreTrainedTokenizerBase
@@ -11,8 +11,20 @@ def load_translation_dataset(
     dataset_name: str,
     dataset_config: str | None = None,
     cache_dir: str | None = None,
+    split_overrides: Mapping[str, str] | None = None,
 ) -> DatasetDict:
     """Loads the requested translation dataset from the Hugging Face Hub."""
+
+    if split_overrides:
+        dataset = DatasetDict()
+        for split_name, split_query in split_overrides.items():
+            dataset[split_name] = load_dataset(
+                dataset_name,
+                dataset_config,
+                split=split_query,
+                cache_dir=cache_dir,
+            )
+        return dataset
 
     return load_dataset(dataset_name, dataset_config, cache_dir=cache_dir)
 
