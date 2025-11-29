@@ -138,6 +138,28 @@ def enable_gradient_checkpointing(model):
     if hasattr(model, "config"):
         model.config.use_cache = False
 
+def find_latest_checkpoint(checkpoint_root):
+    """
+    Scan checkpoint_root for directories named like 'checkpoint-<num>' and return
+    the path to the latest numeric checkpoint. Returns None if none found.
+    """
+    root = Path(checkpoint_root)
+    if not root.exists():
+        return None
+
+    candidates = [p for p in root.iterdir() if p.is_dir() and p.name.startswith("checkpoint-")]
+    if not candidates:
+        return None
+
+    def _key(p: Path) -> int:
+        parts = p.name.split("-")
+        try:
+            return int(parts[-1])
+        except Exception:
+            return -1
+
+    latest = sorted(candidates, key=_key)[-1]
+    return str(latest)
 
 def main():
     configure_logging()
@@ -286,8 +308,13 @@ def main():
         data_collator=data_collator,
         compute_metrics=compute_metrics,
     )
-
-    train_result = trainer.train()
+    
+    last_checkpoint = find_latest_checkpoint(training_args.output_dir)
+    if last_checkpoint is not None:
+        LOGGER.info("Resuming training from checkpoint: %s", last_checkpoint)
+        train_result=trainer.train(resume_from_checkpoint=last_checkpoint)
+    else:
+        train_result = trainer.train()
     trainer.save_model()
 
     metrics = train_result.metrics
