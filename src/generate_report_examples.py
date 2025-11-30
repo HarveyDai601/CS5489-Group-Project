@@ -10,7 +10,7 @@ from typing import Any, Dict, Iterable, List
 import torch
 import yaml
 from peft import PeftModel
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+from transformers import MBart50TokenizerFast, MBartForConditionalGeneration
 
 from data_utils import load_translation_dataset
 
@@ -177,13 +177,19 @@ def main():
     model_cfg = config["model"]
     training_cfg = config["training"]
 
-    tokenizer = AutoTokenizer.from_pretrained(model_cfg["name"], cache_dir=project_cfg.get("cache_dir"))
+    tokenizer = MBart50TokenizerFast.from_pretrained(model_cfg["name"], cache_dir=project_cfg.get("cache_dir"))
     tokenizer.pad_token = tokenizer.pad_token or tokenizer.eos_token
     tokenizer.src_lang = model_cfg["tokenizer_src_lang_code"]
     tokenizer.tgt_lang = model_cfg["tokenizer_tgt_lang_code"]
 
+    target_lang_code = model_cfg["tokenizer_tgt_lang_code"]
+    lang_code_to_id = getattr(tokenizer, "lang_code_to_id", {}) or {}
+    forced_bos_token_id = lang_code_to_id.get(target_lang_code)
+    if forced_bos_token_id is None:
+        LOGGER.warning("Could not determine forced_bos_token_id for %s; generation may decode in the wrong language.", target_lang_code)
+
     dtype = get_dtype(model_cfg.get("torch_dtype"))
-    base_model = AutoModelForSeq2SeqLM.from_pretrained(
+    base_model = MBartForConditionalGeneration.from_pretrained(
         model_cfg["name"],
         cache_dir=project_cfg.get("cache_dir"),
         torch_dtype=dtype,
@@ -204,6 +210,9 @@ def main():
 
     records = build_records(dataset, data_cfg, args.num_samples, args.split)
     gen_kwargs = build_generation_kwargs(training_cfg, data_cfg)
+    if forced_bos_token_id is not None and "forced_bos_token_id" not in gen_kwargs:
+        # MBART needs the BOS token of the target language to guarantee correct generation.
+        gen_kwargs["forced_bos_token_id"] = forced_bos_token_id
     generate_outputs(model, tokenizer, records, device, args.batch_size, data_cfg, gen_kwargs)
     write_csv(records, args.csv_path)
 
