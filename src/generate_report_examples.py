@@ -122,6 +122,7 @@ def build_generation_kwargs(training_cfg: Dict[str, Any], data_cfg: Dict[str, An
         "generation_top_k": "top_k",
         "generation_top_p": "top_p",
         "generation_no_repeat_ngram_size": "no_repeat_ngram_size",
+        "repetition_penalty": "repetition_penalty",
     }
     kwargs: Dict[str, Any] = {}
     for cfg_key, gen_key in mapping.items():
@@ -130,6 +131,7 @@ def build_generation_kwargs(training_cfg: Dict[str, Any], data_cfg: Dict[str, An
             kwargs[gen_key] = value
     kwargs.setdefault("max_length", data_cfg.get("max_target_length", 256))
     kwargs.setdefault("num_beams", 4)
+    kwargs.setdefault("repetition_penalty", 1.2)
     return kwargs
 
 
@@ -189,6 +191,29 @@ def annotate_bleu_scores(records: List[Dict[str, str]]) -> float:
     return corpus_score.score
 
 
+def load_base_and_adapter(model_cfg: Dict[str, Any], project_cfg: Dict[str, Any], checkpoint: Path) -> MBartForConditionalGeneration:
+    dtype = get_dtype(model_cfg.get("torch_dtype"))
+    cache_dir = project_cfg.get("cache_dir")
+    adapter_config_path = checkpoint / "adapter_config.json"
+
+    if adapter_config_path.exists():
+        LOGGER.info("Loading base model %s with LoRA adapter from %s", model_cfg["name"], checkpoint)
+        base_model = MBartForConditionalGeneration.from_pretrained(
+            model_cfg["name"],
+            cache_dir=cache_dir,
+            torch_dtype=dtype,
+        )
+        model = PeftModel.from_pretrained(base_model, checkpoint)
+        return model
+
+    LOGGER.info("Loading full fine-tuned checkpoint from %s", checkpoint)
+    return MBartForConditionalGeneration.from_pretrained(
+        checkpoint,
+        cache_dir=cache_dir,
+        torch_dtype=dtype,
+    )
+
+
 def main():
     args = parse_args()
     configure_logging()
@@ -209,17 +234,17 @@ def main():
     forced_bos_token_id = lang_code_to_id.get(target_lang_code)
     if forced_bos_token_id is None:
         LOGGER.warning("Could not determine forced_bos_token_id for %s; generation may decode in the wrong language.", target_lang_code)
-
-    dtype = get_dtype(model_cfg.get("torch_dtype"))
-    base_model = MBartForConditionalGeneration.from_pretrained(
-        model_cfg["name"],
-        cache_dir=project_cfg.get("cache_dir"),
-        torch_dtype=dtype,
-    )
-    model = PeftModel.from_pretrained(base_model, args.checkpoint)
+    
+    model = load_base_and_adapter(model_cfg, project_cfg, args.checkpoint)
+    if hasattr(model, "peft_config"):
+        LOGGER.info("Active PEFT adapters: %s", list(model.peft_config.keys()))
+    else:
+        LOGGER.info("No PEFT adapters detected; assuming checkpoint already merged.")
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
+    if forced_bos_token_id is not None:
+        model.config.forced_bos_token_id = forced_bos_token_id
 
     datasets = load_translation_dataset(
         data_cfg["dataset_name"],
