@@ -10,6 +10,7 @@ from typing import Any, Dict, Iterable, List
 import torch
 import yaml
 from peft import PeftModel
+from sacrebleu.metrics import BLEU
 from transformers import MBart50TokenizerFast, MBartForConditionalGeneration
 
 from data_utils import load_translation_dataset
@@ -162,9 +163,30 @@ def generate_outputs(
 def write_csv(records: List[Dict[str, str]], csv_path: Path) -> None:
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.DictWriter(handle, fieldnames=["input", "output", "label"])
+        writer = csv.DictWriter(handle, fieldnames=["input", "output", "label", "bleu"])
         writer.writeheader()
         writer.writerows(records)
+
+
+def annotate_bleu_scores(records: List[Dict[str, str]]) -> float:
+    if not records:
+        return 0.0
+    bleu_metric = BLEU()
+    predictions: List[str] = []
+    references: List[str] = []
+    for record in records:
+        prediction = record.get("output", "").strip()
+        reference = record.get("label", "").strip()
+        if prediction and reference:
+            sentence_score = bleu_metric.sentence_score(prediction, [reference])
+            record["bleu"] = round(sentence_score.score, 4)
+        else:
+            record["bleu"] = ""
+        predictions.append(prediction)
+        references.append(reference)
+
+    corpus_score = bleu_metric.corpus_score(predictions, [references])
+    return corpus_score.score
 
 
 def main():
@@ -214,9 +236,12 @@ def main():
         # MBART needs the BOS token of the target language to guarantee correct generation.
         gen_kwargs["forced_bos_token_id"] = forced_bos_token_id
     generate_outputs(model, tokenizer, records, device, args.batch_size, data_cfg, gen_kwargs)
+    corpus_bleu = annotate_bleu_scores(records)
     write_csv(records, args.csv_path)
 
     LOGGER.info("Wrote %d rows to %s", len(records), args.csv_path)
+    LOGGER.info("Corpus BLEU: %.2f", corpus_bleu)
+    print(f"Corpus BLEU: {corpus_bleu:.2f}")
 
 
 if __name__ == "__main__":
