@@ -169,6 +169,7 @@ def generate_outputs(
 ) -> None:
     max_source_length = data_cfg.get("max_source_length", 512)
     model.eval()
+    sample_logged = False
     with torch.no_grad():
         for batch in batched(records, batch_size):
             texts = [record["input"] for record in batch]
@@ -183,6 +184,17 @@ def generate_outputs(
             decoded = tokenizer.batch_decode(outputs, skip_special_tokens=True)
             for record, prediction in zip(batch, decoded):
                 record["output"] = prediction.strip()
+
+            if not sample_logged and batch:
+                sample_input_text = batch[0]["input"].strip()
+                sample_output_text = decoded[0].strip()
+                sample_input_tokens = inputs.input_ids[0].detach().cpu().tolist()
+                sample_output_tokens = outputs[0].detach().cpu().tolist()
+                LOGGER.info("Sample input text: %s", sample_input_text)
+                LOGGER.info("Sample input tokens: %s", sample_input_tokens)
+                LOGGER.info("Sample output text: %s", sample_output_text)
+                LOGGER.info("Sample output tokens: %s", sample_output_tokens)
+                sample_logged = True
 
 
 def write_csv(records: List[Dict[str, str]], csv_path: Path) -> None:
