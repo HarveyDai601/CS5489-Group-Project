@@ -293,9 +293,9 @@ def main():
 
     records = build_records(dataset, data_cfg, args.num_samples, args.split)
     gen_kwargs = build_generation_kwargs(training_cfg, data_cfg)
-    if forced_bos_token_id is not None and "forced_bos_token_id" not in gen_kwargs:
+    if forced_bos_token_id is not None:
         # MBART needs the BOS token of the target language to guarantee correct generation.
-        gen_kwargs["forced_bos_token_id"] = forced_bos_token_id
+        gen_kwargs.setdefault("forced_bos_token_id", forced_bos_token_id)
     generate_outputs(model, tokenizer, records, device, args.batch_size, data_cfg, gen_kwargs)
     corpus_bleu = annotate_bleu_scores(records)
     write_csv(records, args.csv_path)
