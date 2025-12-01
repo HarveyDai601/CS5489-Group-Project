@@ -16,6 +16,7 @@ from transformers import MBart50TokenizerFast, MBartForConditionalGeneration
 from data_utils import load_translation_dataset
 
 LOGGER = logging.getLogger(__name__)
+DEFAULT_LORA_SCALING = 0.5
 
 
 def parse_args() -> argparse.Namespace:
@@ -86,6 +87,28 @@ def get_dtype(name: str | None) -> torch.dtype | None:
 def batched(iterable: List[Dict[str, str]], batch_size: int) -> Iterable[List[Dict[str, str]]]:
     for idx in range(0, len(iterable), batch_size):
         yield iterable[idx : idx + batch_size]
+
+
+def enforce_lora_scaling(model, target_scale: float | None) -> None:
+    """Force every LoRA module to use the same scaling factor when needed."""
+    if target_scale is None:
+        return
+
+    adjusted = 0
+    for name, module in model.named_modules():
+        module_type = type(module).__name__.lower()
+        if "lora" not in module_type or not hasattr(module, "scaling"):
+            continue
+
+        scaling_value = getattr(module, "scaling")
+        if isinstance(scaling_value, dict):
+            module.scaling = {key: target_scale for key in scaling_value}
+        else:
+            module.scaling = target_scale
+        adjusted += 1
+
+    if adjusted:
+        LOGGER.info("Forced LoRA scaling factor to %.2f on %d modules", target_scale, adjusted)
 
 
 def build_records(dataset, data_cfg: Dict[str, Any], limit: int, split_name: str) -> List[Dict[str, str]]:
@@ -236,6 +259,7 @@ def main():
         LOGGER.warning("Could not determine forced_bos_token_id for %s; generation may decode in the wrong language.", target_lang_code)
     
     model = load_base_and_adapter(model_cfg, project_cfg, args.checkpoint)
+    enforce_lora_scaling(model, DEFAULT_LORA_SCALING)
     if hasattr(model, "peft_config"):
         LOGGER.info("Active PEFT adapters: %s", list(model.peft_config.keys()))
     else:
