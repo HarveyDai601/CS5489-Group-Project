@@ -79,5 +79,3 @@ chmod +x scripts/launch_tensorboard.sh
 1. **调整语言对**：修改 `data.dataset_config`、`data.source_language`、`data.target_language` 以及 tokenizer 语言 code。
 2. **更换模型或 LoRA 目标层**：更新 `model.name` 与 `lora.target_modules`；确保模块名称与新模型匹配。
 3. **接入 LLaMA-Factory**：本仓库侧重 `transformers` 流程。如希望使用 LLaMA-Factory，可直接复用 `configs/lora_mt.yaml` 中的数据/训练超参思路，在其 `sft/translation` 任务中复写。
-
-祝训练顺利，随时反馈需求以便进一步完善！
